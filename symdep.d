@@ -9,7 +9,7 @@ import std.range;
 import std.regex;
 import std.stdio;
 import std.string : splitLines;
-import std.typecons : tuple;
+import std.typecons : Tuple, tuple;
 
 version(unittest)
     import std.algorithm;
@@ -40,8 +40,8 @@ auto parseSymDeps(R)(R lines)
         this(R _src)
         {
             src = _src;
-            reSymDef = regex(`^[0-9a-f]+\s+<([^>]+)>:\s*$`);
-            reSymDep = regex(`<([^>+]+)(?:\+(?:0x)?[0-9a-f]+)?>`);
+            reSymDef = regex(`^[0-9a-f]+\s+<([^>\s]+)>:\s*$`);
+            reSymDep = regex(`<([^>+\s]+)(?:\+(?:0x)?[0-9a-f]+)?>`);
             getNext();
         }
 
@@ -105,9 +105,46 @@ END");
     ]));
 }
 
-void buildSymGraph(R)(R lines)
-    if (isInputRange!R && is(ElementType!R : const(char)[]))
+void buildSymGraph(R1,R2)(R1 lines, R2 output)
+    if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
+        isOutputRange!(R2,string))
 {
+    // Stupid ugly workaround for issue 11025
+    static struct SymDep
+    {
+        string sym, dep;
+        this(Tuple!(string,string) t) { sym = t[0]; dep = t[1]; }
+        size_t toHash() const @safe nothrow
+        {
+            return typeid(string).getHash(&sym)*2 +
+                   typeid(string).getHash(&dep);
+        }
+        // Another stupid hack due to TypeInfo.compare pathology:
+        // (cf. issue 11037)
+        int opCmp(SymDep b) const @safe nothrow
+        {
+            return (sym < b.sym) ? -1 :
+                   (sym > b.sym) ? 1  :
+                   (dep < b.dep) ? -1 :
+                   (dep > b.dep) ? 1  : 0;
+        }
+    }
+
+    bool[SymDep] hasSeen;
+
+    output.put("digraph G {\n");
+    lines.parseSymDeps()
+         .filter!((a)
+            {
+                // Don't repeat dependencies.
+                if (SymDep(a) in hasSeen)
+                    return false;
+                hasSeen[SymDep(a)] = true;
+                return true;
+            })
+         .map!((a) => "\t" ~ a[0] ~ " -> " ~ a[1] ~ ";\n")
+         .copy(output);
+    output.put("}\n");
 }
 
 int main(string[] args)
@@ -122,7 +159,7 @@ int main(string[] args)
         string objfile = args[1]; 
 
         auto child = pipeProcess([objdump, "-D", objfile], Redirect.stdout);
-        buildSymGraph(child.stdout.byLine);
+        buildSymGraph(child.stdout.byLine, stdout.lockingTextWriter);
 
         auto status = wait(child.pid);
         if (status != 0)
