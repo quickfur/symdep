@@ -148,6 +148,29 @@ auto getDepList(R)(R lines)
 }
 
 /**
+ * Escapes .dot metacharacters in s.
+ * Returns: Escaped string.
+ */
+string escape(const(char)[] s)
+{
+    auto app = appender!string();
+    foreach (c; s) {
+        switch (c)
+        {
+          case '\"':
+            app.put("\\\"");
+            break;
+          case '\n':
+            app.put("\\n");
+            break;
+          default:
+            app.put(c);
+        }
+    }
+    return app.data;
+}
+
+/**
  * Reads an objdump disassembly from lines and outputs its symbol dependency
  * graph to output in .dot format.
  */
@@ -162,11 +185,11 @@ void buildSymGraph(R1,R2)(R1 lines, R2 output)
         if (dep[0] != curSym)
         {
             // Add demangled labels for each symbol to get nicer output.
-            output.put("\t" ~ dep[0] ~ " [label=\"" ~ demangle(dep[0]) ~
-                       "\"];\n");
+            output.put("\t\"" ~ dep[0] ~ "\" [label=\"" ~
+                       escape(demangle(dep[0])) ~ "\"];\n");
             curSym = dep[0];
         }
-        output.put("\t" ~ dep[0] ~ " -> " ~ dep[1] ~ ";\n");
+        output.put("\t\"" ~ dep[0] ~ "\" -> \"" ~ dep[1] ~ "\";\n");
     }
 
     output.put("}\n");
