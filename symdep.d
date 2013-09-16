@@ -5,6 +5,7 @@
 
 import core.demangle;
 import std.conv;
+import std.getopt;
 import std.process;
 import std.range;
 import std.regex;
@@ -182,12 +183,15 @@ string escape(const(char)[] s)
 /**
  * Outputs a symbol dependency graph in .dot format.
  */
-void outputDot(R)(SymGraph graph, R output)
-        if (isOutputRange!(R,string))
+void outputDot(R1,R2)(R1 keys, SymGraph graph, R2 output)
+        if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
+            isOutputRange!(R2,string))
 {
     output.put("digraph G {\n");
-    foreach (sym; graph.byKey)
+    foreach (sym; keys)
     {
+        assert(sym in graph);
+
         // Add demangled labels for each symbol to get nicer output.
         output.put("\t\"" ~ sym ~ "\" [label=\"" ~ escape(demangle(sym)) ~
                    "\"];\n");
@@ -216,12 +220,46 @@ SymGraph buildSymGraph(R)(R lines)
 }
 
 /**
+ * Computes reachability from the given starting node.
+ * Returns: an associative array of reachable nodes.
+ */
+bool[string] computeReachability(SymGraph graph, string start)
+{
+    bool[string] reachable;
+
+    void dfs(string node)
+    {
+        auto p = node in graph;
+        if (p is null)
+            return;
+
+        if (!(node in reachable))
+        {
+            reachable[node] = true;
+            foreach (child; *p)
+            {
+                dfs(child);
+            }
+        }
+    }
+
+    dfs(start);
+    return reachable;
+}
+
+/**
  * Main program
  */
 int main(string[] args)
 {
     try
     {
+        string reachableFrom;
+
+        getopt(args,
+            "r", &reachableFrom
+        );
+
         if (args.length < 2)
         {
             writeln("Please specify object file or executable to graph");
@@ -231,12 +269,22 @@ int main(string[] args)
 
         auto child = pipeProcess([objdump, "-d", objfile], Redirect.stdout);
         auto graph = buildSymGraph(child.stdout.byLine);
-        outputDot(graph, stdout.lockingTextWriter);
 
         auto status = wait(child.pid);
         if (status != 0)
             throw new Exception("objdump exited with status " ~
                                 to!string(status));
+
+        if (reachableFrom.length > 0)
+        {
+            // Perform reachability analysis
+            auto reachable = computeReachability(graph, reachableFrom);
+            outputDot(graph.byKey.filter!(a => !!(a in reachable)), graph,
+                      stdout.lockingTextWriter);
+            return 0;
+        }
+
+        outputDot(graph.byKey, graph, stdout.lockingTextWriter);
     }
     catch(Exception e)
     {
