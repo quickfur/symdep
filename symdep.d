@@ -20,6 +20,15 @@ immutable objdump = "/usr/bin/objdump";
 
 
 /**
+ * Represents a symbol dependency graph
+ */
+struct SymGraph
+{
+    string[][string] nodes;
+    alias nodes this;
+}
+
+/**
  * Parses objdump output to extract symbol dependencies.
  *
  * Returns: An input range of Tuples containing pairs strings, representing a
@@ -171,30 +180,44 @@ string escape(const(char)[] s)
 }
 
 /**
- * Reads an objdump disassembly from lines and outputs its symbol dependency
- * graph to output in .dot format.
+ * Outputs a symbol dependency graph in .dot format.
  */
-void buildSymGraph(R1,R2)(R1 lines, R2 output)
-    if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
-        isOutputRange!(R2,string))
+void outputDot(R)(SymGraph graph, R output)
+        if (isOutputRange!(R,string))
 {
     output.put("digraph G {\n");
-    string curSym;
-    foreach (dep; lines.getDepList())
+    foreach (sym; graph.byKey)
     {
-        if (dep[0] != curSym)
-        {
-            // Add demangled labels for each symbol to get nicer output.
-            output.put("\t\"" ~ dep[0] ~ "\" [label=\"" ~
-                       escape(demangle(dep[0])) ~ "\"];\n");
-            curSym = dep[0];
-        }
-        output.put("\t\"" ~ dep[0] ~ "\" -> \"" ~ dep[1] ~ "\";\n");
-    }
+        // Add demangled labels for each symbol to get nicer output.
+        output.put("\t\"" ~ sym ~ "\" [label=\"" ~ escape(demangle(sym)) ~
+                   "\"];\n");
 
+        foreach (dep; graph[sym])
+        {
+            output.put("\t\"" ~ sym ~ "\" -> \"" ~ dep ~ "\";\n");
+        }
+    }
     output.put("}\n");
 }
 
+/**
+ * Reads an objdump disassembly from lines and outputs its symbol dependency
+ * graph to output in .dot format.
+ */
+SymGraph buildSymGraph(R)(R lines)
+    if (isInputRange!R && is(ElementType!R : const(char)[]))
+{
+    SymGraph g;
+    foreach (dep; getDepList(lines))
+    {
+        g[dep[0]] ~= dep[1];
+    }
+    return g;
+}
+
+/**
+ * Main program
+ */
 int main(string[] args)
 {
     try
@@ -207,7 +230,8 @@ int main(string[] args)
         string objfile = args[1]; 
 
         auto child = pipeProcess([objdump, "-d", objfile], Redirect.stdout);
-        buildSymGraph(child.stdout.byLine, stdout.lockingTextWriter);
+        auto graph = buildSymGraph(child.stdout.byLine);
+        outputDot(graph, stdout.lockingTextWriter);
 
         auto status = wait(child.pid);
         if (status != 0)
