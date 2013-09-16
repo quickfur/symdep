@@ -3,6 +3,7 @@
  * track down what's causing the template bloat in D executables.
  */
 
+import core.demangle;
 import std.conv;
 import std.process;
 import std.range;
@@ -105,9 +106,12 @@ END");
     ]));
 }
 
-void buildSymGraph(R1,R2)(R1 lines, R2 output)
-    if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
-        isOutputRange!(R2,string))
+/**
+ * Returns: An input range of Tuples containing symbol-dependency string pairs.
+ * This range is guaranteed to have no duplicate pairs.
+ */
+auto getDepList(R)(R lines)
+    if (isInputRange!R && is(ElementType!R : const(char)[]))
 {
     // Stupid ugly workaround for issue 11025
     static struct SymDep
@@ -132,18 +136,39 @@ void buildSymGraph(R1,R2)(R1 lines, R2 output)
 
     bool[SymDep] hasSeen;
 
-    output.put("digraph G {\n");
-    lines.parseSymDeps()
-         .filter!((a)
+    return lines.parseSymDeps()
+           .filter!((a)
             {
-                // Don't repeat dependencies.
+                // Eliminate duplicates.
                 if (SymDep(a) in hasSeen)
                     return false;
                 hasSeen[SymDep(a)] = true;
                 return true;
-            })
-         .map!((a) => "\t" ~ a[0] ~ " -> " ~ a[1] ~ ";\n")
-         .copy(output);
+            });
+}
+
+/**
+ * Reads an objdump disassembly from lines and outputs its symbol dependency
+ * graph to output in .dot format.
+ */
+void buildSymGraph(R1,R2)(R1 lines, R2 output)
+    if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
+        isOutputRange!(R2,string))
+{
+    output.put("digraph G {\n");
+    string curSym;
+    foreach (dep; lines.getDepList())
+    {
+        if (dep[0] != curSym)
+        {
+            // Add demangled labels for each symbol to get nicer output.
+            output.put("\t" ~ dep[0] ~ " [label=\"" ~ demangle(dep[0]) ~
+                       "\"];\n");
+            curSym = dep[0];
+        }
+        output.put("\t" ~ dep[0] ~ " -> " ~ dep[1] ~ ";\n");
+    }
+
     output.put("}\n");
 }
 
@@ -158,7 +183,7 @@ int main(string[] args)
         }
         string objfile = args[1]; 
 
-        auto child = pipeProcess([objdump, "-D", objfile], Redirect.stdout);
+        auto child = pipeProcess([objdump, "-d", objfile], Redirect.stdout);
         buildSymGraph(child.stdout.byLine, stdout.lockingTextWriter);
 
         auto status = wait(child.pid);
