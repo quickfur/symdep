@@ -71,7 +71,7 @@ auto parseSymDeps(R)(R lines)
                 {
                     // Not a symbol definition; see if there's a dependency.
                     m = src.front.match(reSymDep);
-                    if (m)
+                    if (m && curSym != m.captures[1])
                     {
                         // Found dependency: yield.
                         curDep = to!string(m.captures[1]);
