@@ -255,9 +255,21 @@ int main(string[] args)
     try
     {
         string reachableFrom;
+        bool delegate(string sym, bool[string] reachable) filter;
 
         getopt(args,
-            "r", &reachableFrom
+            "r", (string opt, string val) {
+                reachableFrom = val;
+                filter = (string sym, bool[string] reachable) {
+                    return !!(sym in reachable);
+                };
+            },
+            "u", (string opt, string val) {
+                reachableFrom = val;
+                filter = (string sym, bool[string] reachable) {
+                    return !(sym in reachable);
+                };
+            }
         );
 
         if (args.length < 2)
@@ -275,16 +287,15 @@ int main(string[] args)
             throw new Exception("objdump exited with status " ~
                                 to!string(status));
 
-        if (reachableFrom.length > 0)
+        if (filter)
         {
             // Perform reachability analysis
             auto reachable = computeReachability(graph, reachableFrom);
-            outputDot(graph.byKey.filter!(a => !!(a in reachable)), graph,
+            outputDot(graph.byKey.filter!(a => filter(a, reachable)), graph,
                       stdout.lockingTextWriter);
-            return 0;
         }
-
-        outputDot(graph.byKey, graph, stdout.lockingTextWriter);
+        else
+            outputDot(graph.byKey, graph, stdout.lockingTextWriter);
     }
     catch(Exception e)
     {
