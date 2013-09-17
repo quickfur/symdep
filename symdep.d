@@ -16,8 +16,10 @@ import std.typecons : Tuple, tuple;
 version(unittest)
     import std.algorithm;
 
-
-immutable objdump = "/usr/bin/objdump";
+version(Posix)
+    immutable objdumpCmd = ["/usr/bin/objdump", "-d"];
+else
+    static assert(0, "Unsupported platform");
 
 
 /**
@@ -257,10 +259,10 @@ void outputDeps(R,S)(R keys, SymGraph graph, S sink)
     foreach (sym; keys)
     {
         assert(sym in graph);
-        sink.put(sym ~ ":\n");
+        sink.put(demangle(sym) ~ ":\n");
         foreach (dep; graph[sym])
         {
-            sink.put("\t" ~ dep ~ "\n");
+            sink.put("\t" ~ demangle(dep) ~ "\n");
         }
         sink.put("\n");
     }
@@ -281,6 +283,9 @@ void output(R,S)(OutputFmt fmt, R data, SymGraph graph, S sink)
         outputDeps(data, graph, sink);
         break;
 
+      case OutputFmt.revdeps:
+        assert(0);
+
       case OutputFmt.dot:
         outputDot(data, graph, sink);
         break;
@@ -294,24 +299,27 @@ int main(string[] args)
 {
     try
     {
-        OutputFmt outfmt = OutputFmt.list;
-        string reachableFrom;
-        bool delegate(string sym, bool[string] reachable) filter;
+        OutputFmt outfmt = OutputFmt.dot;
+        void delegate(SymGraph graph) filterInit = (SymGraph) {};
+        bool delegate(string) symFilter = (sym) => true;
+
+        auto parseReachableFilter = (string opt, string reachableFrom)
+        {
+            bool[string] reachable;
+            filterInit = (SymGraph graph) {
+                reachable = graph.computeReachability(reachableFrom);
+            };
+            if (opt == "r")
+                symFilter = (string sym) { return !!(sym in reachable); };
+            else if (opt == "u")
+                symFilter = (string sym) { return !(sym in reachable); };
+            else assert(0);
+        };
 
         getopt(args,
             "o", &outfmt,
-            "r", (string opt, string val) {
-                reachableFrom = val;
-                filter = (string sym, bool[string] reachable) {
-                    return !!(sym in reachable);
-                };
-            },
-            "u", (string opt, string val) {
-                reachableFrom = val;
-                filter = (string sym, bool[string] reachable) {
-                    return !(sym in reachable);
-                };
-            }
+            "r", parseReachableFilter,
+            "u", parseReachableFilter
         );
 
         if (args.length < 2)
@@ -321,7 +329,7 @@ int main(string[] args)
         }
         string objfile = args[1]; 
 
-        auto child = pipeProcess([objdump, "-d", objfile], Redirect.stdout);
+        auto child = pipeProcess(objdumpCmd ~ [objfile], Redirect.stdout);
         auto graph = buildSymGraph(child.stdout.byLine);
 
         auto status = wait(child.pid);
@@ -329,15 +337,9 @@ int main(string[] args)
             throw new Exception("objdump exited with status " ~
                                 to!string(status));
 
-        if (filter)
-        {
-            // Perform reachability analysis
-            auto reachable = computeReachability(graph, reachableFrom);
-            output(outfmt, graph.byKey.filter!(a => filter(a, reachable)),
-                   graph, stdout.lockingTextWriter);
-        }
-        else
-            output(outfmt, graph.byKey, graph, stdout.lockingTextWriter);
+        filterInit(graph);
+        output(outfmt, graph.byKey.filter!symFilter, graph,
+               stdout.lockingTextWriter);
     }
     catch(Exception e)
     {
