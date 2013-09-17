@@ -21,6 +21,26 @@ version(Posix)
 else
     static assert(0, "Unsupported platform");
 
+/**
+ * Lame hack to implement exit().
+ */
+class ExitException : Exception
+{
+    int exitCode;
+    this(int _exitCode = 0)
+    {
+        super("Exited");
+        exitCode = _exitCode;
+    }
+}
+
+/**
+ * Exits the program by throwing an ExitException.
+ */
+void exit(int exitCode)
+{
+    throw new ExitException(exitCode);
+}
 
 /**
  * Represents a symbol dependency graph
@@ -292,6 +312,21 @@ void output(R,S)(OutputFmt fmt, R data, SymGraph graph, S sink)
     }
 }
 
+void showHelp(string progName)
+{
+    writefln(q"ENDHELP
+Syntax: %s [options] <inputfile>
+Options:
+    -f <fmt>        Specify output format:
+                        deps    Output symbols with the symbols they reference
+                        dot     Output reference graph in graphviz's DOT format
+                    [Default: deps]
+    -h              Show this help
+    -r <symbol>     Include only symbols recursively referenced by <symbol>
+    -u <symbol>     Include only symbols NOT recursively referenced by <symbol>
+ENDHELP", progName);
+}
+
 /**
  * Main program
  */
@@ -299,7 +334,7 @@ int main(string[] args)
 {
     try
     {
-        OutputFmt outfmt = OutputFmt.dot;
+        OutputFmt outfmt = OutputFmt.deps;
         void delegate(SymGraph graph) filterInit = (SymGraph) {};
         bool delegate(string) symFilter = (sym) => true;
 
@@ -317,7 +352,8 @@ int main(string[] args)
         };
 
         getopt(args,
-            "o", &outfmt,
+            "f", &outfmt,
+            "h", { showHelp(args[0]); exit(1); },
             "r", parseReachableFilter,
             "u", parseReachableFilter
         );
@@ -340,6 +376,10 @@ int main(string[] args)
         filterInit(graph);
         output(outfmt, graph.byKey.filter!symFilter, graph,
                stdout.lockingTextWriter);
+    }
+    catch(ExitException e)
+    {
+        return e.exitCode;
     }
     catch(Exception e)
     {
