@@ -184,8 +184,8 @@ string escape(const(char)[] s)
  * Outputs a symbol dependency graph in .dot format.
  */
 void outputDot(R1,R2)(R1 keys, SymGraph graph, R2 output)
-        if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
-            isOutputRange!(R2,string))
+    if (isInputRange!R1 && is(ElementType!R1 : const(char)[]) &&
+        isOutputRange!(R2,string))
 {
     output.put("digraph G {\n");
     foreach (sym; keys)
@@ -248,16 +248,58 @@ bool[string] computeReachability(SymGraph graph, string start)
 }
 
 /**
+ * Outputs data in list format
+ */
+void outputDeps(R,S)(R keys, SymGraph graph, S sink)
+    if (isInputRange!R && is(ElementType!R : const(char)[]) &&
+        isOutputRange!(S,string))
+{
+    foreach (sym; keys)
+    {
+        assert(sym in graph);
+        sink.put(sym ~ ":\n");
+        foreach (dep; graph[sym])
+        {
+            sink.put("\t" ~ dep ~ "\n");
+        }
+        sink.put("\n");
+    }
+}
+
+enum OutputFmt { deps, revdeps, dot }
+
+/**
+ * Outputs data in the specified format.
+ */
+void output(R,S)(OutputFmt fmt, R data, SymGraph graph, S sink)
+    if (isInputRange!R && is(ElementType!R : const(char)[]) &&
+        isOutputRange!(S,string))
+{
+    final switch (fmt)
+    {
+      case OutputFmt.deps:
+        outputDeps(data, graph, sink);
+        break;
+
+      case OutputFmt.dot:
+        outputDot(data, graph, sink);
+        break;
+    }
+}
+
+/**
  * Main program
  */
 int main(string[] args)
 {
     try
     {
+        OutputFmt outfmt = OutputFmt.list;
         string reachableFrom;
         bool delegate(string sym, bool[string] reachable) filter;
 
         getopt(args,
+            "o", &outfmt,
             "r", (string opt, string val) {
                 reachableFrom = val;
                 filter = (string sym, bool[string] reachable) {
@@ -291,11 +333,11 @@ int main(string[] args)
         {
             // Perform reachability analysis
             auto reachable = computeReachability(graph, reachableFrom);
-            outputDot(graph.byKey.filter!(a => filter(a, reachable)), graph,
-                      stdout.lockingTextWriter);
+            output(outfmt, graph.byKey.filter!(a => filter(a, reachable)),
+                   graph, stdout.lockingTextWriter);
         }
         else
-            outputDot(graph.byKey, graph, stdout.lockingTextWriter);
+            output(outfmt, graph.byKey, graph, stdout.lockingTextWriter);
     }
     catch(Exception e)
     {
