@@ -20,6 +20,7 @@
  */
 
 import core.demangle;
+import std.algorithm;
 import std.conv;
 import std.getopt;
 import std.process;
@@ -28,9 +29,6 @@ import std.regex;
 import std.stdio;
 import std.string : splitLines;
 import std.typecons : Tuple, tuple;
-
-version(unittest)
-    import std.algorithm;
 
 version(Posix)
     immutable objdumpCmd = ["/usr/bin/objdump", "-d"];
